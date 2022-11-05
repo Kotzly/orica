@@ -21,6 +21,10 @@ EEG.icaact     = [];
 	'sphering','online','block_white',8,'block_ica',8,'nsub',0, ...
 	'forgetfac','cooling','localstat',Inf,'ffdecayrate',0.6, ...
 	'evalconverg',1,'verbose','on');
+%[EEG.icaweights, EEG.icasphere] = orica(EEG.data,'numpass',1, ...
+%	'sphering','online','block_white',8,'block_ica',8,'nsub',0, ...
+%	'forgetfac','adaptive','localstat',Inf,'ffdecayrate',0.6, ...
+%	'evalconverg',1,'verbose','on');
 
 EEG.icawinv = pinv(EEG.icaweights*EEG.icasphere);
 
@@ -36,11 +40,11 @@ mir_true = sum(h0) - sum(getent2(y_true)) + sum(log(abs(eig(pinv(EEG.icawinv_tru
 H = EEG.icaweights * EEG.icasphere * EEG.icawinv_true; C = H.^2;
 crossTalkError = (EEG.nbchan-sum(max(C,[],1)./sum(C,1))/2-sum(max(C,[],2)./sum(C,2))/2)/(EEG.nbchan-1);
 
-fprintf('Cross talk error: %f (dB) \nMIR: %f(true)\nMIR: %f(orica)\n',db(crossTalkError),mir_true,mir_orica);
+#fprintf('Cross talk error: %f (dB) \nMIR: %f(true)\nMIR: %f(orica)\n',db(crossTalkError),mir_true,mir_orica);
 
 %% visualize decomposed scalp maps
 [correlation, idx_truth, idx_orica] = matcorr(EEG.icawinv_true', EEG.icawinv', 0, 0);
 idx = sortrows([idx_truth, idx_orica],1); [~,idx_corr] = sortrows([idx_truth, correlation],1);
 EEG.icawinv = EEG.icawinv(:,idx(:,2)) * diag(sign(correlation(idx_corr)));
-pop_topoplot(EEG,0,1:EEG.nbchan);
+#pop_topoplot(EEG,0,1:EEG.nbchan);
 

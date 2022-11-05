@@ -162,6 +162,13 @@ for i = 1:2:length(varargin) % for each Keyword
             fprintf('orica(): method not specified, choose ''cooling'', ''constant'', or ''adaptive''')
             return
         end
+     elseif strcmp(Keyword,'save_file')
+        Value = lower(Value);
+        if ~isstr(Value)
+            save_file = "./filtered.csv";
+        else
+            save_file = Value;
+        end
     elseif strcmp(Keyword,'localstat') || strcmp(Keyword,'tau_const')
         if isstr(Value)
             fprintf('orica(): local stationarity value must be a number')
@@ -262,7 +269,6 @@ end
 % whiten / sphere the data
 data = state.icasphere * data;
 
-
 %
 %%%%%%%%%%%%%%%%%%%% Online Recusive ICA %%%%%%%%%%%%%%%%%%%%
 %
@@ -282,7 +288,9 @@ if verbose
     end
     tic; 
 end
-
+iter_cnt = 0;
+im_cnt = 0;
+filtered_data = data;
 for it = 1 : numPass
     for bi = 0 : numBlock-1
         
@@ -292,18 +300,48 @@ for it = 1 : numPass
             data(:,dataRange) = state.icasphere * data(:,dataRange);
         end
         state = dynamicOrica(data(:, dataRange), state, dataRange, adaptiveFF, evalConvergence);
-        
+        filtered_data(:, dataRange) = state.icaweights * data(:, dataRange);
         if verbose
             if printflag < floor(10*((it-1)*numBlock+bi)/numPass/numBlock); 
                 printflag = printflag + 1;
-                fprintf(' %d%% ', 10*printflag);
+                %fprintf(' %d%% ', 10*printflag);
             end
         end
+        
+        plot_ = false;
+        if (mod(iter_cnt, 25) == 1) && plot_
+          clf
+          m = state.icaweights;
+          min_c = min(min(m));
+          max_c = max(max(m));
+          imshow(m, "DisplayRange", [min_c, max_c]);
+          colorbar
+          saveas(gcf,strcat("./w/img_", strcat(num2str(im_cnt, "%05.f"), '.png')));
+          
+          clf
+          m = state.icasphere;
+          min_c = min(min(m));
+          max_c = max(max(m));
+          imshow(m, "DisplayRange", [min_c, max_c]);
+          colorbar
+          saveas(gcf,strcat("./m/img_", strcat(num2str(im_cnt, "%05.f"), '.png')));
 
+          clf
+          m = corrcoef(data(:,dataRange)');
+          min_c = min(min(m));
+          max_c = max(max(m));
+          imshow(m, "DisplayRange", [min_c, max_c]);
+          colorbar
+          saveas(gcf,strcat("./c/img_", strcat(num2str(im_cnt, "%05.f"), '.png')));
+          
+          im_cnt += 1;
+        end
+        iter_cnt += 1;
+        
     end 
 end
 if verbose, fprintf('Finished.\nEllapsed time: %f sec.\n',toc); end
-
+csvwrite(save_file, filtered_data);
 % output weights and sphere matrices
 % TODO: consider averaging
 weights = state.icaweights;
@@ -319,6 +357,7 @@ function state = dynamicWhitening(blockdata, dataRange, state, adaptiveFF)
     % define adaptive forgetting rate: lambda
     switch adaptiveFF.profile
         case 'cooling'
+
             lambda = genCoolingFF(state.counter+dataRange, adaptiveFF.gamma, adaptiveFF.lambda_0);
             if lambda(1) < adaptiveFF.lambda_const
                 lambda = repmat(adaptiveFF.lambda_const,1,nPts); 
@@ -328,13 +367,14 @@ function state = dynamicWhitening(blockdata, dataRange, state, adaptiveFF)
         case 'adaptive'
             lambda = repmat(state.lambda_k(end),1,nPts); % using previous adaptive lambda_k from adaptiveOrica
     end
-        
+    
     % update sphere matrix using online RLS whitening block update rule
     v = state.icasphere * blockdata; % pre-whitened data 
+    
     lambda_avg = 1 - lambda(ceil(end/2));    % median lambda
     QWhite = lambda_avg/(1-lambda_avg) + trace(v' * v) / nPts;
+    
     state.icasphere = 1/lambda_avg * (state.icasphere - v * v' / nPts / QWhite * state.icasphere);
-
 end
 
 
@@ -355,6 +395,7 @@ y = state.icaweights * blockdata;
 if isempty(nlfunc)
     f(state.kurtsign,:)  = -2 * tanh(y(state.kurtsign,:));                        % Supergaussian
     f(~state.kurtsign,:) = 2 * tanh(y(~state.kurtsign,:));                        % Subgaussian
+%    f(~state.kurtsign,:) = tanh(y(~state.kurtsign,:)) - y(~state.kurtsign,:);                        % Subgaussian
 else
     f = nlfunc(y);
 end
@@ -374,6 +415,7 @@ end
 % compute the forgetting rate
 switch adaptiveFF.profile
     case 'cooling'
+
         state.lambda_k = genCoolingFF(state.counter+dataRange, adaptiveFF.gamma, adaptiveFF.lambda_0);
         if state.lambda_k(1) < adaptiveFF.lambda_const
             state.lambda_k = repmat(adaptiveFF.lambda_const,1,nPts); 
@@ -390,14 +432,46 @@ switch adaptiveFF.profile
         state.lambda_k = genAdaptiveFF(dataRange,state.lambda_k,adaptiveFF.decayRateAlpha,adaptiveFF.upperBoundBeta,adaptiveFF.transBandWidthGamma,adaptiveFF.transBandCenter,ratioOfNormRn);
 end
 
+    
 % update weight matrix using online recursive ICA block update rule
 lambda_prod = prod(1./(1-state.lambda_k));
+
 Q = 1 + state.lambda_k .* (dot(f,y,1)-1);
 state.icaweights = lambda_prod * (state.icaweights - y * diag(state.lambda_k./Q) * f' * state.icaweights);
 
 % orthogonalize weight matrix 
 [V,D] = eig(state.icaweights * state.icaweights');
+before = state.icaweights;
+if iscomplex(state.icaweights)
+  disp("BEFORE");
+  error(num2str(state.icaweights));
+end
 state.icaweights = V/sqrt(D)*V' * state.icaweights; 
+if iscomplex(state.icaweights)
+  disp("AFTER");
+  disp("-----")
+
+  disp("WEIGHT MATRIX BEFORE");
+  disp(num2str(before));
+  disp("-----")
+
+  disp("SOURCE EIGEIN BEFORE");
+  disp(num2str(before * before'));
+  disp("-----")
+
+  [V,D] = eig(before * before');
+
+  disp("V");
+  disp(num2str(V));
+  disp("-----")
+  
+  disp("D");
+  disp(num2str(D));
+  disp("-----")
+
+  error(num2str(state.icaweights));
+  disp("-----")
+end
 
 end
 
@@ -405,6 +479,7 @@ end
 function lambda = genCoolingFF(t,gamma,lambda_0)
     % lambda = lambda_0 / sample^gamma
     lambda = lambda_0 ./ (t .^ gamma);
+    
 end
 
 
